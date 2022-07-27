@@ -202,7 +202,7 @@ static char *bytes(uint64_t b)
 static const char *COMMAND_NAME;
 static void show_usage(void)
 {
-	fprintf(stderr, "Usage: %s %s { <interface> | all | interfaces } [public-key | private-key | listen-port | fwmark | peers | preshared-keys | endpoints | allowed-ips | latest-handshakes | transfer | persistent-keepalive | dump]\n", PROG_NAME, COMMAND_NAME);
+	fprintf(stderr, "Usage: %s %s { <interface> | all | interfaces } [public-key | private-key | listen-port | fwmark | peers | preshared-keys | endpoints | allowed-ips | latest-handshakes | transfer | persistent-keepalive | dump | json]\n", PROG_NAME, COMMAND_NAME);
 }
 
 static void pretty_print(struct wgdevice *device)
@@ -285,6 +285,55 @@ static void dump_print(struct wgdevice *device, bool with_interface)
 		else
 			printf("off\n");
 	}
+}
+
+static void print_json(struct wgdevice *device)
+{
+    struct wgpeer *peer;
+    struct wgallowedip *allowedip;
+
+	printf("\"%s\":{", device->name);
+    if (device->flags & WGDEVICE_HAS_PRIVATE_KEY) {
+        printf("\"privateKey\":\"%s\",", key(device->private_key));
+    }
+
+    if (device->flags & WGDEVICE_HAS_PUBLIC_KEY) {
+        printf("\"publicKey\": \"%s\",", key(device->public_key));
+    }
+
+    if (device->listen_port) printf("\"listenPort\": %u,", device->listen_port);
+    if (device->fwmark) printf("\"fwmark\": %u,", device->fwmark);
+
+    printf("\"peers\":[");
+    for_each_wgpeer(device, peer) {
+        printf("{");
+        printf("\"public_key\": \"%s\",", key(peer->public_key));
+        if (peer->flags & WGPEER_HAS_PRESHARED_KEY) {
+            printf("\"preshared_key\":\"%s\",", peer->preshared_key);
+        }
+
+        if (peer->endpoint.addr.sa_family == AF_INET || peer->endpoint.addr.sa_family == AF_INET6) {
+			printf("\"endpoint\":\"%s\",", endpoint(&peer->endpoint.addr));
+        }
+
+        printf("\"allowedips\":[");
+        if (peer->first_allowedip) {
+            for_each_wgallowedip(peer, allowedip)
+				printf("\"%s/%u\"%s", ip(allowedip), allowedip->cidr, allowedip->next_allowedip ? "," : "],");
+        } else {
+            printf("],");
+        }
+
+        printf("\"latestHandshake\":%llu,", (unsigned long long)peer->last_handshake_time.tv_sec);
+        printf("\"transferRx\":%" PRIu64 ",\"transferTx\":%" PRIu64 ",", (uint64_t)peer->rx_bytes, (uint64_t)peer->tx_bytes);
+
+        if (peer->persistent_keepalive_interval) {
+			printf("\"persistentKeepalive\":%u", peer->persistent_keepalive_interval);
+        }
+
+        printf(peer->next_peer ? "}," : "}");
+    }
+    printf("]}");
 }
 
 static bool ugly_print(struct wgdevice *device, const char *param, bool with_interface)
@@ -389,6 +438,7 @@ int show_main(int argc, const char *argv[])
 
 	if (argc == 1 || !strcmp(argv[1], "all")) {
 		char *interfaces = ipc_list_devices(), *interface;
+        bool json = argc == 3 && !strcmp(argv[2], "json");
 
 		if (!interfaces) {
 			perror("Unable to list interfaces");
@@ -396,6 +446,8 @@ int show_main(int argc, const char *argv[])
 		}
 		ret = !!*interfaces;
 		interface = interfaces;
+
+        if (json) printf("{");
 		for (size_t len = 0; (len = strlen(interface)); interface += len + 1) {
 			struct wgdevice *device = NULL;
 
@@ -403,8 +455,13 @@ int show_main(int argc, const char *argv[])
 				fprintf(stderr, "Unable to access interface %s: %s\n", interface, strerror(errno));
 				continue;
 			}
-			if (argc == 3) {
-				if (!ugly_print(device, argv[2], true)) {
+            if (json) {
+                print_json(device);
+                if (strlen(interface+len+1)) {
+                    printf(",");
+                }
+			} else if (argc == 3) {
+                if (!ugly_print(device, argv[2], true)) {
 					ret = 1;
 					free_wgdevice(device);
 					break;
@@ -417,6 +474,7 @@ int show_main(int argc, const char *argv[])
 			free_wgdevice(device);
 			ret = 0;
 		}
+        if (json) printf("}");
 		free(interfaces);
 	} else if (!strcmp(argv[1], "interfaces")) {
 		char *interfaces, *interface;
@@ -444,7 +502,9 @@ int show_main(int argc, const char *argv[])
 			return 1;
 		}
 		if (argc == 3) {
-			if (!ugly_print(device, argv[2], false))
+            if (!strcmp(argv[2], "json"))
+                print_json(device);
+			else if (!ugly_print(device, argv[2], false))
 				ret = 1;
 		} else
 			pretty_print(device);
