@@ -27,7 +27,7 @@
 static int peer_cmp(const void *first, const void *second)
 {
 	time_t diff;
-	const struct wgpeer *a = *(const void **)first, *b = *(const void **)second;
+	const struct wgpeer *a = *(void *const *)first, *b = *(void *const *)second;
 
 	if (!a->last_handshake_time.tv_sec && !a->last_handshake_time.tv_nsec && (b->last_handshake_time.tv_sec || b->last_handshake_time.tv_nsec))
 		return 1;
@@ -361,9 +361,9 @@ static bool ugly_print(struct wgdevice *device, const char *param, bool with_int
 		else
 			printf("off\n");
 	} else if (!strcmp(param, "endpoints")) {
-		if (with_interface)
-			printf("%s\t", device->name);
 		for_each_wgpeer(device, peer) {
+			if (with_interface)
+				printf("%s\t", device->name);
 			printf("%s\t", key(peer->public_key));
 			if (peer->endpoint.addr.sa_family == AF_INET || peer->endpoint.addr.sa_family == AF_INET6)
 				printf("%s\n", endpoint(&peer->endpoint.addr));
